@@ -1,54 +1,130 @@
 <?php
-/*
-	Made by http://www.github.com/viruxe
+/**
+ * Made by http://www.github.com/viruxe
+ * 
+ * Requirements: openssl and zip extensions
+ * 
+ * Usage: php update-artifacts.php [recommended|optional|latest|critical] [--force]
+ */
 
-	Requirements: openssl and zip extensions
-	
-	Windows - an "artifacts" folder gets created
-	Linux - will just extract the files onto the current working folder
-	
-	Usage: artifacts.php ('recommended'/'optional'/'latest'/'critical')
-	The latest version will be downloaded if no argument is provided.
-*/
-$os = PHP_OS_FAMILY === 'Windows' ? 'win32' : 'linux';
+declare(strict_types=1);
 
-print("Downloading Changelog for '$os'... ");
+final class ArtifactsUpdater
+{
+    private const string VERSION_FILE = ".artifacts_version";
+    private readonly string $os;
+    private readonly string $artifactsType;
+    private readonly bool $force;
+    private readonly bool $yes;
 
-$changelogManifestJson = file_get_contents("https://changelogs-live.fivem.net/api/changelog/versions/$os/server");
-	
-if($changelogManifestJson) print("Done.\n"); else die("Unable to Download.");
+    public function __construct(array $argv)
+    {
+        $this->os = PHP_OS_FAMILY === 'Windows' ? 'win32' : 'linux';
+        $this->force = in_array("--force", $argv, true) || in_array("-f", $argv, true);
+        $this->yes = in_array("--yes", $argv, true) || in_array("-y", $argv, true);
+        
+        $type = "recommended";
+        foreach (array_slice($argv, 1) as $arg) {
+            if (!str_starts_with($arg, "-")) {
+                $type = $arg;
+                break;
+            }
+        }
+        $this->artifactsType = $type;
+    }
 
-$changelog = json_decode($changelogManifestJson, true);
-	
-$artifactsType = $argv[1] ?? "latest";
-$versionNumber = $changelog[$artifactsType] ?? die("Unknown version. Try 'recommended'/'optional'/'latest'/'critical' instead.");
-$downloadURL   = $changelog["{$artifactsType}_download"] ?? die("Unable to get download URL.");
-$txAdmin       = $changelog["{$artifactsType}_txadmin"] ?? "Unknown";
-$fileName      = basename($downloadURL);
+    public function run(): void
+    {
+        echo "Fetching Changelog for '{$this->os}'..." . PHP_EOL;
+        $changelog = $this->fetchChangelog();
 
-print("Downloading '$artifactsType' artifacts, version '$versionNumber' (txAdmin '$txAdmin')... ");
+        $versionNumber = $changelog[$this->artifactsType] ?? $this->error("Unknown version type '{$this->artifactsType}'.");
+        $txAdmin = $changelog["{$this->artifactsType}_txadmin"] ?? "Unknown";
 
-$fileContents = file_get_contents($downloadURL);
+        echo "Target: '{$this->artifactsType}' (version '{$versionNumber}', txAdmin '{$txAdmin}')" . PHP_EOL;
 
-if($fileContents) {
-	print("Done.\nSaving... ");
-	file_put_contents($fileName, $fileContents);
-	print("Done.\n");
-} else
-	die("Unable to Download.");
+        if (!$this->force && $this->isAlreadyInstalled($versionNumber)) {
+            echo "Artifacts are already up to date (version '{$versionNumber}'). Use --force to re-download." . PHP_EOL;
+            $this->finish();
+            return;
+        }
 
-if($os === "win32") {
-	$archive = new ZipArchive;
-	
-	print("Opening Archive... ");
-	if($archive->open($fileName)) {
-		print("Done.\nExtracting... ");
-		print(@$archive->extractTo("./artifacts/") ? "Done." : "Unable to extract. Is the server running?") . PHP_EOL;
-		$archive->close();
-	} else
-		die("Unable to open.");
-} else {
-	$command = "tar xfJ $fileName";
-	shell_exec($command);
-	print("Executed '$command'. Verify the current working directory.\n");
+        $downloadUrl = $changelog["{$this->artifactsType}_download"] ?? $this->error("Unable to get download URL.");
+        $fileName = $this->os === 'win32' ? "artifacts.zip" : "artifacts.tar.xz";
+
+        echo "Downloading from: {$downloadUrl}" . PHP_EOL;
+        $this->download($downloadUrl, $fileName);
+
+        echo "Extracting archive..." . PHP_EOL;
+        $this->extract($fileName);
+        
+        file_put_contents(self::VERSION_FILE, $versionNumber);
+        @unlink($fileName);
+
+        echo "Artifacts updated successfully to version '{$versionNumber}'." . PHP_EOL;
+
+        $this->finish();
+    }
+
+    private function fetchChangelog(): array
+    {
+        $url = "https://changelogs-live.fivem.net/api/changelog/versions/{$this->os}/server";
+        $json = @file_get_contents($url);
+        if (!$json) {
+            $this->error("Unable to download changelog data from Cfx.re.");
+        }
+        return json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+    }
+
+    private function isAlreadyInstalled(string $version): bool
+    {
+        if (!file_exists(self::VERSION_FILE)) {
+            return false;
+        }
+        return trim((string)file_get_contents(self::VERSION_FILE)) === $version;
+    }
+
+    private function download(string $url, string $destination): void
+    {
+        $content = @file_get_contents($url);
+        if (!$content) {
+            $this->error("Failed to download artifacts from '{$url}'.");
+        }
+        file_put_contents($destination, $content);
+    }
+
+    private function extract(string $fileName): void
+    {
+        if ($this->os === 'win32') {
+            $zip = new ZipArchive();
+            if ($zip->open($fileName) === true) {
+                if (!$zip->extractTo("./artifacts/")) {
+                    $this->error("Unable to extract zip. Is the server running?");
+                }
+                $zip->close();
+            } else {
+                $this->error("Failed to open zip archive.");
+            }
+        } else {
+            $command = "tar xfJ " . escapeshellarg($fileName);
+            shell_exec($command);
+        }
+    }
+
+    private function finish(): void
+    {
+        $isTty = $this->os === 'win32' || (function_exists('posix_isatty') && posix_isatty(STDIN));
+        if (!$this->yes && $isTty) {
+            echo PHP_EOL . "Press enter to terminate...";
+            fgets(STDIN);
+        }
+    }
+
+    private function error(string $message): never
+    {
+        fwrite(STDERR, "Error: {$message}" . PHP_EOL);
+        exit(1);
+    }
 }
+
+(new ArtifactsUpdater($argv))->run();

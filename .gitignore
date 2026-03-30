@@ -1,1 +1,8 @@
 /target
+
+alpine/
+.artifacts_version
+run.sh
+artifacts/
+artifacts.zip
+artifacts.tar.xz

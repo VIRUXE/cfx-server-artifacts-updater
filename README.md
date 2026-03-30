@@ -4,13 +4,47 @@
 
 A bundle of scripts to easily update your _[Cfx.re](https://cfx.re)_ (FiveM/RedM) server artifacts.
 
-This was formerly just a PHP script but since not everyone has PHP installed on their systems I decided to convert to PowerShell and Shell.
+This project provides multiple ways to update your server: **Rust**, **PHP**, **PowerShell**, and **Shell**.
 
-The usage is the same in any script: `./file.extension (recommended/optional/[latest]/critical)` with the default for no version argument passed being "latest"
+## Features
+
+- **Version Tracking**: Automatically checks if you already have the requested version installed to avoid unnecessary downloads.
+- **Progress Bar**: Shows download progress (supported in Rust, Shell, and PowerShell).
+- **txAdmin Reporting**: Displays the txAdmin version included in the artifacts.
+- **Cross-Platform**: Support for both Windows and Linux.
+
+## Usage
+
+The usage is consistent across all scripts:
+`./file.extension [recommended|optional|latest|critical] [--force]`
+
+- **Default**: `recommended`
+- **--force / -f**: Force download and extraction even if the version is already up to date.
+
+### Rust (Recommended)
+```bash
+# Build and run
+cargo run -- recommended
+```
+
+### Shell
+```bash
+./update-artifacts.sh recommended
+```
+
+### PHP
+```bash
+php update-artifacts.php latest
+```
+
+### PowerShell
+```powershell
+.\update-artifacts.ps1 critical
+```
+
+## Recommended Directory Structure
 
 Just leave one of these scripts outside of your artifacts folder, that you _should_ be using for all your servers.
-
-Example directory structure:
 
 - fivem
   - **update-artifacts.ext**

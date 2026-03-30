@@ -1,20 +1,26 @@
 <#
 	Made by http://www.github.com/viruxe
 	
-	Usage: .\update-artifacts.ps1 ('recommended'/'optional'/'latest'/'critical')
+	Usage: .\update-artifacts.ps1 ('recommended'/'optional'/'latest'/'critical') [-Force]
 	The 'latest' version will be downloaded if no argument is provided.
 #>
+
+Param(
+    [Parameter(Position=0)]
+    [ValidateSet("recommended", "optional", "latest", "critical")]
+    [string]$Version = "recommended",
+
+    [switch]$Force,
+    
+    [switch]$Yes
+)
 
 try {
 	$originalProgressPreference = $ProgressPreference
 	$ProgressPreference = 'SilentlyContinue'
+	$versionFile = ".artifacts_version"
 	
-	if ($args.Count -gt 0) {
-		$version = $args[0]
-	} else {
-		$version = "latest"
-	}
-	
+    Write-Host "Fetching Changelog for 'win32'..."
 	try {
 		$data = Invoke-WebRequest -Uri "https://changelogs-live.fivem.net/api/changelog/versions/win32/server" -UseBasicParsing
 	} catch {
@@ -22,68 +28,61 @@ try {
 	}
 	
 	$changelog = $data.Content | ConvertFrom-Json
-	$versionNumber = $changelog.$version
+	$versionNumber = $changelog.$Version
 	
 	if (-not $versionNumber) { 
 		throw "Unknown version. Try 'recommended'/'optional'/'latest'/'critical' instead." 
-	} else {
-		$downloadURL = $changelog."${version}_download"
-		
-		if (-not $downloadURL) { 
-			throw "Unable to get download URL." 
-		} else {
-			$txAdmin = $null
-			if ($changelog."${version}_txadmin" -ne $null) {
-				$txAdmin = $changelog."${version}_txadmin"
-			} else {
-				$txAdmin = "Unknown"
-			}
-			
-			Write-Host "Downloading '$version' artifacts, version '$versionNumber' (txAdmin '$txAdmin')... "
-			
-			try {
-				$file = Invoke-WebRequest -Uri $downloadURL -UseBasicParsing
-			} catch {
-				throw "Error: Unable to download the file."
-			}
-			
-			if (-not $file) {
-				throw "Error: Download failed or file is empty."
-			} else {
-				Write-Host "Done.`nSaving... "
-				
-				if ($file.Content.Length -gt 0) {
-					$filePath = Join-Path -Path (Get-Location) -ChildPath "server.zip"
-					[System.IO.File]::WriteAllBytes($filePath, $file.Content)
-					Write-Host "File saved to $filePath"
-					
-					if (Test-Path $filePath) {
-						Write-Host "Extracting... "
-						$extractPath = Join-Path -Path (Get-Location) -ChildPath "artifacts\"
-					
-						if (-not (Test-Path $extractPath)) {
-							Write-Host "Creating artifacts directory..."
-							New-Item -ItemType Directory -Force -Path $extractPath | Out-Null
-						}
-					
-						Expand-Archive -LiteralPath $filePath -DestinationPath $extractPath -Force
-						Write-Host "Extraction complete."
-						Remove-Item $filePath -Force
-					} else {
-						throw "Error: Downloaded file is missing or inaccessible."
-					}
-				} else {
-					throw "Error: File downloaded is empty."
-				}
-			}
-		}
 	}
+
+    $downloadURL = $changelog."${Version}_download"
+    $txAdmin = if ($null -ne $changelog."${Version}_txadmin") { $changelog."${Version}_txadmin" } else { "Unknown" }
+    
+    Write-Host "Target: '$Version' (version '$versionNumber', txAdmin '$txAdmin')"
+
+    if (-not $Force -and (Test-Path $versionFile)) {
+        $installed = Get-Content $versionFile -Raw
+        if ($installed -eq $versionNumber) {
+            Write-Host "Artifacts are already up to date (version '$versionNumber'). Use -Force to re-download."
+            if (-not $Yes) {
+                Write-Host "`nPress enter to terminate..."
+                [void][System.Console]::ReadLine()
+            }
+            return
+        }
+    }
+    
+    if (-not $downloadURL) { 
+        throw "Unable to get download URL." 
+    }
+    
+    Write-Host "Downloading from: $downloadURL"
+    
+    try {
+        $filePath = Join-Path -Path (Get-Location) -ChildPath "artifacts.zip"
+        Invoke-WebRequest -Uri $downloadURL -OutFile $filePath -UseBasicParsing
+    } catch {
+        throw "Error: Unable to download the file."
+    }
+
+    Write-Host "Extracting archive..."
+    
+    $extractPath = Join-Path -Path (Get-Location) -ChildPath "artifacts\"
+
+    if (-not (Test-Path $extractPath)) {
+        New-Item -ItemType Directory -Force -Path $extractPath | Out-Null
+    }
+
+    Expand-Archive -LiteralPath $filePath -DestinationPath $extractPath -Force
+    Remove-Item $filePath -Force
+    Set-Content -Path $versionFile -Value $versionNumber
 	
-	$ProgressPreference = $originalProgressPreference
+	Write-Host "Artifacts updated successfully to version '$versionNumber'."
 } catch {
-	Write-Host "Error: An unexpected error occurred. $($_.Exception.Message)"
+	Write-Error "Error: An unexpected error occurred. $($_.Exception.Message)"
 } finally {
-	Write-Host
-	Write-Host "Press any key to exit..."
-	$Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") | Out-Null
+	$ProgressPreference = $originalProgressPreference
+    if (-not $Yes) {
+        Write-Host "`nPress enter to terminate..."
+        [void][System.Console]::ReadLine()
+    }
 }
